@@ -1,0 +1,38 @@
+{
+  "_note": "Colors and names the map reuses from one update to the next. The script adds a color for each new ORI and saves it here. Share this file along with the spreadsheet if another computer needs to produce exactly the same video.",
+  "ori_colors": {
+    "AZCBP3700": "#ffd1dc",
+    "LACBP0700": "#e8d5a0",
+    "MACBP0500": "#8fa0ff",
+    "ORCIS0000": "#199e70",
+    "VACBP1500": "#e3b23c",
+    "WACBP1500": "#9ee6a0",
+    "WACBP3500": "#d55181",
+    "WACBP3502": "#d0e040",
+    "WACBP3503": "#5fd3e6",
+    "WACBP3504": "#ff7f50",
+    "WACBP3506": "#f0efec",
+    "WACBP3507": "#c9a7ff",
+    "WACBP3804": "#00a6a6",
+    "WACBP3809": "#a3542a",
+    "WACBP6700": "#3987e5",
+    "WACIS0000": "#ff4fd8",
+    "WACIS0100": "#d95926"
+  },
+  "state_names": {
+    "AZ": "Arizona",
+    "CA": "California",
+    "DC": "D.C.",
+    "ID": "Idaho",
+    "LA": "Louisiana",
+    "MA": "Massachusetts",
+    "MN": "Minnesota",
+    "NV": "Nevada",
+    "NY": "New York",
+    "OR": "Oregon",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VA": "Virginia",
+    "VT": "Vermont"
+  }
+}
