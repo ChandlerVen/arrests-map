@@ -35,8 +35,8 @@ def install_requirements():
         sys.exit(
             f"This needs Python {'.'.join(map(str, MINIMUM_PYTHON))} or newer, "
             f"but it is running on {sys.version.split()[0]} ({sys.executable}).\n"
-            "In VS Code, press Ctrl+Shift+P (Mac: Cmd+Shift+P), choose "
-            '"Python: Select Interpreter", and pick a newer version.'
+            "Install a newer version from python.org, then run the script with it, "
+            "for example: python3.13 make_animation.py"
         )
 
     missing = [pkg for module, pkg in REQUIREMENTS.items() if find_spec(module) is None]
@@ -82,6 +82,7 @@ EXTENT = (-123.0, -121.6, 46.95, 48.15)  # map view: west, east, south, north
 WASHINGTON = (-124.9, -116.9, 45.5, 49.1)  # coordinates outside this are not in Washington
 ORI_PATTERN = r"[A-Z]{2}[A-Z0-9]{7}"  # two-letter state, then seven letters or digits
 NAMED_MINIMUM = 6  # a Washington ORI needs this many arrests to get its own color
+KEY_MIN_FONT = 10  # the key shrinks to fit; past this, the least-used out-of-state ORIs share a row
 
 PREVIEW = False  # True makes a quick low-resolution version for checking
 FPS = 30
@@ -105,7 +106,7 @@ CITIES = {
 }
 
 # Colors given to ORIs that style.json does not have yet
-SPARE_COLORS = ["#b8e1ff", "#7fd4a8", "#ff9f9f", "#d4b8ff", "#ffe08a", "#9fd8ff"]
+SPARE_COLORS = ["#8447b2", "#264aff", "#994c73", "#7cb26b", "#9d6bb2"]
 
 # Agencies are read from letters 3-5 of the ORI, and appear in this order.
 AGENCIES = {
@@ -264,6 +265,15 @@ def assign_colors(arrests, style):
     return named, bool(added)
 
 
+def key_scale(groups):
+    """How far the key has to shrink to fit the space below the caption."""
+    rows_left = 1 + len(groups[0]["rows"])
+    rows_right = sum(1 + len(group["rows"]) for group in groups[1:])
+    crowding = max(rows_left, rows_right + 0.5 * max(len(groups) - 2, 0))
+    row_height = min(KEY_ROW_HEIGHT, (KEY_TOP - KEY_BOTTOM) / crowding)
+    return row_height, row_height / KEY_ROW_HEIGHT
+
+
 def build_key(arrests, style, named):
     """Lay the key out in groups of rows, each row appearing when its ORI is first used."""
     colors, states = style["ori_colors"], style["state_names"]
@@ -285,15 +295,30 @@ def build_key(arrests, style, named):
         unnamed = [o for o in oris if o not in named]
         if unnamed:
             rows.append(key_row(unnamed, "Other ORIs", GRAY_DOT, shape, False))
-        groups.append({"header": header, "marker": shape, "rows": rows})
+        groups.append({"header": header, "rows": rows})
 
     out_of_state = arrests[arrests.state != "WA"]
-    if len(out_of_state):  # these are few, so each one gets its own row whatever its count
+    if len(out_of_state):
         rows = [key_row([o], f"{o} ({states.get(o[:2], o[:2])})",
                         colors[o] if o in named else GRAY_DOT,
                         AGENCIES.get(o[2:5], (OTHER_SHAPE,))[0], o in named)
                 for o in sorted(out_of_state.ori.unique())]
-        groups.append({"header": "Out-of-state ORIs", "marker": None, "rows": rows})
+        groups.append({"header": "Out-of-state ORIs", "rows": rows})
+
+    if len(out_of_state):
+        counts = arrests.ori.value_counts()
+        least_used = sorted(out_of_state.ori.unique(), key=lambda ori: (counts[ori], ori))
+        combined = []
+        while len(least_used) > 1 and SIZE_KEY * key_scale(groups)[1] < KEY_MIN_FONT:
+            combined.append(least_used.pop(0))
+            rows = [row for row in groups[-1]["rows"] if not row["oris"] & set(combined)]
+            rows.append(key_row(combined, f"{len(combined)} other out-of-state ORIs",
+                                GRAY_DOT, OTHER_SHAPE, False))
+            groups[-1]["rows"] = rows
+        if combined:
+            arrests.loc[arrests.ori.isin(combined), ["named", "color"]] = [False, GRAY_DOT]
+            print(f"{len(combined)} out-of-state ORIs share one key row, "
+                  f"to keep the key readable. See KEY_MIN_FONT.\n")
 
     for group in groups:
         group["rows"].sort(key=lambda row: (not row["named"], row["first"], row["label"]))
@@ -332,11 +357,7 @@ def draw_map(fig, counties, width):
 
 
 def draw_key(fig, groups, left):
-    rows_left = 1 + len(groups[0]["rows"])
-    rows_right = sum(1 + len(group["rows"]) for group in groups[1:])
-    crowding = max(rows_left, rows_right + 0.5 * max(len(groups) - 2, 0))
-    row_height = min(KEY_ROW_HEIGHT, (KEY_TOP - KEY_BOTTOM) / crowding)
-    scale = row_height / KEY_ROW_HEIGHT  # shrink the text if an update brings more ORIs
+    row_height, scale = key_scale(groups)
 
     columns = [left, left + KEY_COLUMN_X]
     tops = [KEY_TOP, KEY_TOP]
@@ -344,13 +365,8 @@ def draw_key(fig, groups, left):
     for position, group in enumerate(groups):
         column = 0 if position == 0 else 1
         x, y = columns[column], tops[column]
-        parts = []
-        if group["marker"]:
-            parts.append(fig.add_artist(Line2D([x + KEY_MARKER_X], [y], marker=group["marker"],
-                                               color=TEXT_FAINT, markersize=9,
-                                               transform=fig.transFigure)))
-        parts.append(fig.text(x + (KEY_LABEL_X if group["marker"] else 0), y, group["header"],
-                              color=TEXT_FAINT, fontsize=SIZE_LABEL * scale, va="center"))
+        parts = [fig.text(x, y, group["header"], color=TEXT_FAINT,
+                          fontsize=SIZE_LABEL * scale, va="center")]
         headers.append({"parts": parts, "first": group["first"]})
 
         y -= row_height
@@ -394,7 +410,7 @@ def draw_chart(fig, arrests, left, start, end):
     ax.set_xticks(months)
     ax.set_xticklabels([f"{m:%b}" + (f" {m.year}" if across_years and m.month == 1 else "")
                         for m in months], color=TEXT_FAINT, fontsize=SIZE_SMALL)
-    ax.text(0, 1.03, "DOL-assisted arrests per week", transform=ax.transAxes,
+    ax.text(0, 1.03, "DOL-assisted arrests per week:", transform=ax.transAxes,
             color=TEXT_DIM, fontsize=SIZE_LABEL, va="bottom")
     cursor = ax.axvline(start, color=TEXT_FAINT, lw=1.0, zorder=0)
     return bars, weeks, cursor
@@ -530,6 +546,19 @@ def render(arrests, counties, groups, out_path):
     return still
 
 
+def describe_key(arrests, groups):
+    """The key as text, to read before starting a render that takes minutes."""
+    counts = arrests.ori.value_counts()
+    rows = sum(len(group["rows"]) for group in groups)
+    lines = [f"{rows} rows in the key, at {SIZE_KEY * key_scale(groups)[1]:.1f} pt:"]
+    for group in groups:
+        lines.append(f"  {group['header']}")
+        for row in group["rows"]:
+            total = int(counts[counts.index.isin(row["oris"])].sum())
+            lines.append(f"    {row['label']:<34} {total:>4} arrest" + ("s" if total != 1 else ""))
+    return "\n".join(lines)
+
+
 def choose_spreadsheet():
     try:
         import tkinter as tk
@@ -551,6 +580,7 @@ def choose_spreadsheet():
 
 
 def main():
+    key_only = "--list" in sys.argv[1:]  # print the key and stop, without rendering
     print("Choose the spreadsheet in the window that opens.")
     spreadsheet = choose_spreadsheet()
 
@@ -562,6 +592,9 @@ def main():
     if colors_added:
         save_style(style)
     groups = build_key(arrests, style, named)
+    if key_only:
+        print(describe_key(arrests, groups))
+        return
 
     counties = gpd.read_file(Path(__file__).with_name("wa_counties.gpkg"))
     out_path = spreadsheet.with_name("dol_arrests_map" + ("_preview" if PREVIEW else "") + ".mp4")
